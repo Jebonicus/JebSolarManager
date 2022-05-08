@@ -35,13 +35,13 @@
 #define OLED_RESET -1   //   QT-PY / XIAO
 Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-
+#include "secrets.h"
 /* Put your SSID & Password */
-const char* ssid = "XXX";
-const char* password = "XXX";
-const char* mqtt_server = "XXX";
-const char* mqtt_user = "XXX";
-const char* mqtt_pass = "XXX";
+//const char* ssid = "XXX";
+//const char* password = "XXX";
+//const char* mqtt_server = "XXX";
+//const char* mqtt_user = "XXX";
+//const char* mqtt_pass = "XXX";
 
 Adafruit_ADS1115 ads;
 WebServer server(80);
