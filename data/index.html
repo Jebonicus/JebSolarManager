@@ -1,0 +1,58 @@
+
+<!DOCTYPE html> <html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>JebSolarManager %VERSION%</title>
+<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center; background: #004225}
+body{margin-top: 20px;color: #fff} h1 {color: #ccc;margin: 10px auto 30px;}
+p {font-size: 14px;color: #fff;margin: 10px;}
+hr {border: 1px solid #422500;margin: 20px;}
+table {
+  margin-left: auto;
+  margin-right: auto;
+    text-align: left;
+    border-spacing: 15px 10px;
+}
+table td:first-child {
+    text-align: right;
+  border-spacing: 30px;
+}
+</style>
+<script language="javascript">
+	function changeAlpha() {
+	    var http = new XMLHttpRequest();
+	    http.open("POST", "/setAlpha", true);
+	    http.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+	    var params = "alpha=" + document.getElementById("target_power_alpha").value;
+	    http.send(params);
+	    http.onload = function() {
+	        console.log(http.responseText);
+	    }
+	}
+</script>
+</head>
+<body>
+<div style="display:inline-block; top: 5px;">
+<h1>JebSolarManager %VERSION%%SIM%</h1>
+
+<table border="0" class=".center">
+<tr><td><b>Measured Current:</b></td><td>%CURRENT%</td></tr>
+<tr><td><b>Measured Volts:</b></td><td>%VOLTAGE%</td></tr>
+<tr><td><b>Measured Power:</b></td><td>%POWER%</td></tr>
+<tr><td><b>Total Energy Production:</b></td><td> %ENERGY%</td></tr>
+
+<tr><td><b>Grid Consumption:</b></td><td>%GRID_CONSUMPTION%</td></tr></table>
+<hr>
+<table border="0" class=".center">
+<tr><td><b>Target Power:</b></td><td>%TARGET_POWER%</td></tr>
+<tr><td><b>Target Amps:</b></td><td>%TARGET_CURRENT%</td></tr>
+<tr><td><b>DAC pin:</b></td><td>%DAC%</td></tr></table>
+<hr>
+<form action="/setAlpha" method="get">
+	<p>Target Power Alpha Smoothing Factor:<br>
+	<input type="range" id="target_power_alpha" name="alpha" min="0" max="1" step="0.001" value="%TARGET_POWER_ALPHA%" oninput="document.getElementById('target_power_alpha_label').value = this.value"><output style="display: inline-block;width: 100px;" id="target_power_alpha_label">%TARGET_POWER_ALPHA%</output>
+	
+	<input type="submit" value="Set" onclick="changeAlpha(); return false;"></p>
+</form>
+</div>
+</body>
+</html>

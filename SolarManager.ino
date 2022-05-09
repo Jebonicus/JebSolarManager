@@ -1,5 +1,7 @@
 #include <WiFi.h>
-#include <WebServer.h>
+//#include <jebwebserver.h>
+#include "SPIFFS.h"
+#include "ESPAsyncWebServer.h"
 #include <Adafruit_ADS1X15.h>
 #include <SPI.h>
 #include <Wire.h>
@@ -7,7 +9,8 @@
 #include <Adafruit_SH110X.h>
 #include <PubSubClient.h>
 
-#define SIMULATION false
+const String versionStr = "v0.3";
+#define SIMULATION true
 
 #define LED_BUILTIN 2
 // Output voltage for MOSFET control
@@ -19,8 +22,6 @@
 #define PERIOD_MS 50
 #define DISPLAY_RATE 4
 #define OUTPUT_RATE 100
-// How quickly to change power, between 0.0-1.0. Smaller = slower, larger=faster (careful!)
-#define TARGET_POWER_ALPHA 0.02
 
 #define MAX_POWER 300.0f
 #define MAX_AMPS 10.0f
@@ -33,9 +34,10 @@
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET -1   //   QT-PY / XIAO
-Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
 
 #include "secrets.h"
+// Secrets.h contains the following:
 /* Put your SSID & Password */
 //const char* ssid = "XXX";
 //const char* password = "XXX";
@@ -43,9 +45,12 @@ Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, 
 //const char* mqtt_user = "XXX";
 //const char* mqtt_pass = "XXX";
 
+
+Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Adafruit_ADS1115 ads;
-WebServer server(80);
 WiFiClient espClient;
+//JebWebServer server;
+AsyncWebServer server(80);
 PubSubClient mqtt(espClient);
 
 float amps = 0.0f; // Unit: A, Topic: jsm/amps
@@ -61,6 +66,8 @@ int16_t resultsA; // raw amp ADC reading
 int16_t resultsV; // raw volt ADC reading
 uint16_t loop_counter = 0; // Used to slow update of display/mqtt
 bool mqtt_initialised = false;
+// How quickly to change power, between 0.0-1.0. Smaller = slower, larger=faster (careful!)
+float target_power_alpha = 0.02f;
 
 uint16_t grid_consumption_lastupdate = 0;
 
@@ -76,7 +83,7 @@ void setup() {
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setCursor(0, 0);
-  display.println("JebSolarManager v0.3");
+  display.print("JebSolarManager "); display.println(versionStr);
   display.print("Booting...");
   display.display();
 
@@ -102,18 +109,106 @@ void setup() {
       Serial.println(F(" still trying to connect"));
     }
   }
-  server.on("/", handle_OnConnect);
-  server.onNotFound(handle_NotFound);
-  
-  server.begin();
-  Serial.println("HTTP server started");
 
   mqtt.setServer(mqtt_server, 1883);
   mqtt.setCallback(mqtt_callback);
   mqtt_connect();
+  
+  
+  if(!SPIFFS.begin(false)){
+     Serial.println("An Error has occurred while mounting SPIFFS - web server not available");
+  }
+
+  server.on("/setAlpha", HTTP_ANY, [](AsyncWebServerRequest *request){
+    bool ok = false;
+    if(request->hasParam("alpha", true))
+    {
+      AsyncWebParameter* p = request->getParam("alpha", true);
+      float newAlpha = p->value().toFloat();
+      if(newAlpha>=0.0f && newAlpha<=1.0f)
+      {
+        target_power_alpha = newAlpha;
+        Serial.print("Updated Alpha to: "); Serial.println(String(target_power_alpha, 3));
+        ok = true;
+      }
+    }
+    if(ok)
+    {
+      request->send(200, "application/json", "{\"response\":\"ok\"}");
+    }
+    else
+    {
+      request->send(400, "application/json", "{\"response\":\"ko\",\"reason\":\"invalid/missing alpha parameter - must be between 0.0-1.0\"}");
+    }
+  });
+  server.serveStatic("/", SPIFFS, "/").setTemplateProcessor(getHtmlTemplateVar).setDefaultFile("index.html");
+ 
+  server.begin();
+  Serial.println("Web Server started!");
+  listDir(SPIFFS, "/", 0);
   display.print("Ready!");
   display.display();
   delay(1000);
+}
+
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
+   Serial.printf("Listing directory: %s\r\n", dirname);
+
+   File root = fs.open(dirname);
+   if(!root){
+      Serial.println("− failed to open directory");
+      return;
+   }
+   if(!root.isDirectory()){
+      Serial.println(" − not a directory");
+      return;
+   }
+
+   File file = root.openNextFile();
+   while(file){
+      if(file.isDirectory()){
+         Serial.print("  DIR : ");
+         Serial.println(file.name());
+         if(levels){
+            listDir(fs, file.name(), levels -1);
+         }
+      } else {
+         Serial.print("  FILE: ");
+         Serial.print(file.name());
+         Serial.print("\tSIZE: ");
+         Serial.println(file.size());
+      }
+      file = root.openNextFile();
+   }
+}
+
+String getHtmlTemplateVar(const String& var)
+{
+  if(var == "VERSION"){
+    return versionStr;
+  } else if(var == "CURRENT") {
+    return String(amps, 2);
+  } else if(var == "VOLTAGE") {
+    return String(volts, 2);
+  } else if(var == "POWER") {
+    return String(power, 2);
+  } else if(var == "ENERGY") {
+    return String(energy, 4);
+  } else if(var == "GRID_CONSUMPTION") {
+    return String(grid_consumption, 2);
+  } else if(var == "TARGET_POWER") {
+    return String(target_power, 2);
+  } else if(var == "TARGET_CURRENT") {
+    return String(target_amps, 2);
+  } else if(var == "DAC") {
+    return String(dac_value);
+  } else if(var == "TARGET_POWER_ALPHA") {
+    return String(target_power_alpha, 3);
+  } else if(var == "SIM") {
+    return SIMULATION ? String("<br>Simulation"):String("");
+  }
+ 
+  return String();
 }
 
 void mqtt_callback(char* topic_b, byte* payload_b, unsigned int length)
@@ -190,7 +285,7 @@ void readVolts(void)
   }
   else
   {
-    volts = 35.0;
+    volts = 35.12;
   }
 }
 
@@ -200,20 +295,21 @@ void updateDisplay(void)
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
   display.setCursor(0, 0);
-  display.println("JebSolarManager v0.3");
+  display.print("JebSolarManager "); display.println(versionStr);
   
   display.setCursor(0, 15);
-  display.print(String(volts, 2)); display.print(" V    ");
+  display.print("      ");
+  display.print(String(volts, 2)); display.print(" V ");
   display.print(String(amps, 2)); display.println(" A");
-  display.print("Power: "); display.print(String(power, 2)); display.println(" W");
+  display.print("Power "); display.print(String(power, 0)); display.println(" W");
 
-  display.print("Total: "); display.print(String(energy, 4)); display.println(" kWh");
+  display.print("Total "); display.print(String(energy, 4)); display.println(" kWh");
 
   if(mqtt_initialised)
   {
-    display.print("Grid In: "); display.print(String(grid_consumption, 2)); display.println(" W");
+    display.print("Grid  "); display.print(String(grid_consumption, 0)); display.println(" W");
     display.println("");
-    display.print("Limit: "); display.print(String(target_power, 0)); display.print(" W "); display.print(String(target_amps, 2)); display.println(" A");
+    display.print("Limit "); display.print(String(target_power, 0)); display.print(" W "); display.print(String(target_amps, 2)); display.println(" A");
   }
   else
   {
@@ -242,7 +338,7 @@ void processMeasurements(void)
   {
     new_target_power = min(MAX_POWER, max(0.0f, power + grid_consumption));
   }
-  target_power = (target_power * (1.0f - TARGET_POWER_ALPHA)) + (new_target_power * TARGET_POWER_ALPHA);
+  target_power = (target_power * (1.0f - target_power_alpha)) + (new_target_power * target_power_alpha);
   
   target_amps = min(MAX_AMPS, target_power / max(MIN_VOLTS, volts));
 
@@ -266,7 +362,6 @@ void publish_mqtt(void)
 }
 
 void loop() {
-  server.handleClient();
   readAmps();
   readVolts();
   processMeasurements();
@@ -307,49 +402,4 @@ void loop() {
     publish_mqtt();
   }
   delay(PERIOD_MS);
-}
-
-void handle_OnConnect() {
-  server.send(200, "text/html", SendHTML()); 
-}
-
-void handle_NotFound(){
-  server.send(404, "text/plain", "Not found");
-}
-
-String SendHTML(void){
-  String ptr = "<!DOCTYPE html> <html>\n";
-  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
-  ptr +="<title>JebSolarManager v0.3</title>\n";
-  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
-  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";
-/*  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n";
-  ptr +=".button-on {background-color: #3498db;}\n";
-  ptr +=".button-on:active {background-color: #2980b9;}\n";
-  ptr +=".button-off {background-color: #34495e;}\n";
-  ptr +=".button-off:active {background-color: #2c3e50;}\n";*/
-  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";
-  ptr +="</style>\n";
-  ptr +="</head>\n";
-  ptr +="<body>\n";
-  ptr +="<h1>JebSolarManager v0.3";
-  if(SIMULATION) {
-    ptr += " - SIMULATION";
-  }
-  ptr +="</h1>\n";
-
-  ptr += "<p><b>Measured Current:</b>  " + String(amps, 3) + "A </p><br>\n";
-  ptr += "<p><b>Measured Volts:</b>  " + String(volts, 3) + "V </p><br>\n";
-  ptr += "<p><b>Measured Power:</b>  " + String(power, 3) + "W </p><br>\n";
-  ptr += "<p><b>Total Energy Production:</b>  " + String(energy, 6) + "kWh </p><br>\n";
-  ptr += "<br>\n";
-  ptr += "<p><b>Grid Consumption:</b>" + String(grid_consumption, 2) + "W</p><br>\n";
-  ptr += "<hr>\n";
-  ptr += "<p><b>Target Power:</b>" + String(target_power, 2) + "W</p><br>\n";
-  ptr += "<p><b>Target Amps:</b>" + String(target_amps, 2) + "A</p><br>\n";
-  ptr += "<p><b>DAC pin:</b>" + String(dac_value) + "</p><br>\n";
-  
-  ptr +="</body>\n";
-  ptr +="</html>\n";
-  return ptr;
 }
